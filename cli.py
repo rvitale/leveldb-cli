@@ -1,6 +1,10 @@
 import cmd
 import leveldb
 import os
+import readline
+import rlcompleter
+import signal
+import sys
 
 
 def db_selected(fn):
@@ -18,43 +22,77 @@ class LevelDBCLI(cmd.Cmd, object):
     prompt = 'leveldb> '
     db = None
     HISTORY_PATH = '/tmp/.leveldb.history' 
-    ignored_commands = set(('EOF', 'history'))
-    
-    def preloop(self):
-        if os.path.exists(self.HISTORY_PATH):
-            with open(self.HISTORY_PATH) as f:
-                self._hist = [c.strip() for c in f]
-        else:
-            self._hist = []
 
-    def precmd(self, line):
-        c = line.strip()
-        if c not in self.ignored_commands:
-            self._hist.append(c)
-        return line
+    def preloop(self):
+        # self._original_sigint = signal.getsignal(signal.SIGINT)
+        # signal.signal(signal.SIGINT, self._signal_handler)
+        readline.parse_and_bind("tab: complete")
+        if os.path.exists(self.HISTORY_PATH):
+            readline.read_history_file(self.HISTORY_PATH)
 
     def do_history(self, line):
-        for i, c in enumerate(self._hist):
-            print i, c
+        for i in xrange(1, readline.get_current_history_length() + 1):
+            print '%d\t%s' % (i, readline.get_history_item(i))
 
     def do_open(self, path):
-        "Greet the person"
         self.db = leveldb.LevelDB(path)
 
     @db_selected
-    def do_put(self, key, value):
+    def do_put(self, line):
+        key, value = line.strip().split()
         self.db.Put(key, value)
-    
+
     @db_selected
-    def do_get(self, key):
+    def do_get(self, line):
+        key = line.strip()
         print self.db.Get(key)
 
+    @db_selected
+    def do_range_iter(self, line):
+        keys = line.strip().split()
+        if keys and len(keys) == 2:
+            key_from, key_to = keys
+            it = self.db.RangeIter(key_from, key_to)
+        else:
+            it = self.db.RangeIter()
+        for el in it:
+            print '%s\t->\t%s' % el
+
+    @db_selected
+    def do_delete(self, line):
+        key = line.strip()
+        self.db.Delete(key)
+
+    @db_selected
+    def do_get_stats(self, line):
+        print self.db.GetStats()
+
     def do_EOF(self, line):
-        with open('/tmp/.leveldb.history', 'a') as f:
-            for c in self._hist:
-                f.write('%s\n' % c)
         print
+        return self.exit()
+
+    def do_exit(self, line):
+        return self.exit()
+
+    def do_quit(self, line):
+        return self.exit()
+
+    def exit(self):
+        readline.write_history_file(self.HISTORY_PATH)
         return True
+
+    def _signal_handler(self, signum, frame):
+        signal.signal(signal.SIGINT, self._original_sigint)
+
+        try:
+            if raw_input("\nReally quit? (y/n)> ").lower().startswith('y'):
+                sys.exit(1)
+        except KeyboardInterrupt:
+            print("Ok ok, quitting")
+            sys.exit(1)
+
+        # restore the exit gracefully handler here
+        signal.signal(signal.SIGINT, self._signal_handler)
 
 
 if __name__ == '__main__':
